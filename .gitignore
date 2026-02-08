@@ -1,6 +1,7 @@
 # Local SSH keys
 *.pem
 *.key
+*.pub
 id_rsa
 id_rsa.pub
 ssh_keys/
