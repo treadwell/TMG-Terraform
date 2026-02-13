@@ -1,0 +1,21 @@
+{
+  email kbrooks@treadwellmedia.com
+  auto_https disable_redirects
+}
+
+http://treadwellmedia.io, http://www.treadwellmedia.io, http://*.treadwellmedia.io {
+  @www host www.treadwellmedia.io
+  redir @www https://treadwellmedia.io{uri} 308
+  redir https://{host}{uri} 308
+}
+
+https://treadwellmedia.io, https://www.treadwellmedia.io {
+  tls {
+    issuer acme {
+      disable_http_challenge
+    }
+  }
+  @www host www.treadwellmedia.io
+  redir @www https://treadwellmedia.io{uri} 308
+  import /home/app/caddy/apps/*.caddy
+}
