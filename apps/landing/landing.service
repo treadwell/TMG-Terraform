@@ -8,7 +8,7 @@ User=app
 Environment=XDG_RUNTIME_DIR=/run/user/%U
 Restart=always
 TimeoutStopSec=10
-ExecStart=/usr/bin/podman run --rm --name landing -p 8081:80 docker.io/library/nginx:alpine
+ExecStart=/usr/bin/podman run --rm --name landing -p 127.0.0.1:8081:80 docker.io/library/nginx:alpine
 ExecStop=/usr/bin/podman stop -t 10 landing
 ExecStopPost=/usr/bin/podman rm -f landing
 

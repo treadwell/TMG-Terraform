@@ -59,6 +59,12 @@ packages:
   - fuse-overlayfs
 
 runcmd:
+  - systemctl enable --now ssh
+  - |
+      if ! ss -lnt | awk '$4 ~ /:22$/ {found=1} END{exit !found}'; then
+        journalctl -u ssh --no-pager -n 80 || true
+        exit 1
+      fi
   - usermod --add-subuids 100000-165535 --add-subgids 100000-165535 app
   - loginctl enable-linger app
   - |
@@ -93,6 +99,53 @@ runcmd:
       [Install]
       WantedBy=multi-user.target
       UNIT
+  - |
+      cat >/etc/systemd/system/landing.service <<'UNIT'
+      [Unit]
+      Description=Podman NGINX Hello (landing)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=app
+      PermissionsStartOnly=true
+      ExecStartPre=/bin/mkdir -p /run/user/APP_UID_PLACEHOLDER
+      ExecStartPre=/bin/chown app:app /run/user/APP_UID_PLACEHOLDER
+      Environment=XDG_RUNTIME_DIR=/run/user/APP_UID_PLACEHOLDER
+      Restart=always
+      TimeoutStopSec=10
+      ExecStart=/usr/bin/podman run --rm --name landing -p 127.0.0.1:8081:80 docker.io/library/nginx:alpine
+      ExecStop=/usr/bin/podman stop -t 10 landing
+      ExecStopPost=/usr/bin/podman rm -f landing
+
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+  - |
+      cat >/etc/systemd/system/hello.service <<'UNIT'
+      [Unit]
+      Description=Podman NGINX Hello (hello.treadwellmedia.io)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=app
+      PermissionsStartOnly=true
+      ExecStartPre=/bin/mkdir -p /run/user/APP_UID_PLACEHOLDER
+      ExecStartPre=/bin/chown app:app /run/user/APP_UID_PLACEHOLDER
+      Environment=XDG_RUNTIME_DIR=/run/user/APP_UID_PLACEHOLDER
+      Restart=always
+      TimeoutStopSec=10
+      ExecStart=/usr/bin/podman run --rm --name hello -p 127.0.0.1:8082:80 docker.io/library/nginx:alpine
+      ExecStop=/usr/bin/podman stop -t 10 hello
+      ExecStopPost=/usr/bin/podman rm -f hello
+
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+  - |
+      APP_UID="$(id -u app)"
+      sed -i "s|APP_UID_PLACEHOLDER|$${APP_UID}|g" /etc/systemd/system/landing.service /etc/systemd/system/hello.service
   - mkdir -p /home/app/caddy/apps /home/app/caddy/data /home/app/caddy/config
   - |
       cat >/home/app/caddy/Caddyfile <<'CADDYFILE'
@@ -115,16 +168,29 @@ runcmd:
         }
         @www host www.treadwellmedia.io
         redir @www https://treadwellmedia.io{uri} 308
-        import /home/app/caddy/apps/*.caddy
+        reverse_proxy 127.0.0.1:8081
       }
+
+      https://hello.treadwellmedia.io {
+        tls {
+          issuer acme {
+            disable_http_challenge
+          }
+        }
+        reverse_proxy 127.0.0.1:8082
+      }
+
+      # Add future app routes as standalone site blocks in /home/app/caddy/apps/*.caddy
+      # Example:
+      # https://app.treadwellmedia.io {
+      #   reverse_proxy 127.0.0.1:9000
+      # }
+      import /home/app/caddy/apps/*.caddy
       CADDYFILE
-  - |
-      if [ -z "$(ls -A /home/app/caddy/apps 2>/dev/null)" ]; then
-        printf '%s\n' '@maintenance host treadwellmedia.io *.treadwellmedia.io' 'respond @maintenance "Maintenance" 503' >/home/app/caddy/apps/maintenance.caddy
-      fi
+  - rm -f /home/app/caddy/apps/maintenance.caddy
   - chown -R app:app /home/app
   - systemctl daemon-reload
-  - systemctl enable --now caddy.service
+  - systemctl enable --now landing.service hello.service caddy.service
 EOF
 }
 

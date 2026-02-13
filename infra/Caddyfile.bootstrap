@@ -17,5 +17,16 @@ https://treadwellmedia.io, https://www.treadwellmedia.io {
   }
   @www host www.treadwellmedia.io
   redir @www https://treadwellmedia.io{uri} 308
-  import /home/app/caddy/apps/*.caddy
+  reverse_proxy 127.0.0.1:8081
 }
+
+https://hello.treadwellmedia.io {
+  tls {
+    issuer acme {
+      disable_http_challenge
+    }
+  }
+  reverse_proxy 127.0.0.1:8082
+}
+
+import /home/app/caddy/apps/*.caddy

@@ -1,2 +1,0 @@
-@writer host writer.treadwellmedia.io
-reverse_proxy @writer 127.0.0.1:8082
