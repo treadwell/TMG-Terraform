@@ -92,7 +92,7 @@ runcmd:
       [Service]
       Restart=always
       TimeoutStopSec=10
-      ExecStart=/usr/bin/podman run --rm --name caddy --network host -v /home/app/caddy/Caddyfile:/etc/caddy/Caddyfile:ro -v /home/app/caddy/data:/data -v /home/app/caddy/config:/config docker.io/library/caddy:2-alpine
+      ExecStart=/usr/bin/podman run --rm --name caddy --network host -v /home/app/caddy/Caddyfile:/etc/caddy/Caddyfile:ro -v /home/app/caddy/apps:/home/app/caddy/apps:ro -v /home/app/caddy/data:/data -v /home/app/caddy/config:/config docker.io/library/caddy:2-alpine
       ExecStop=/usr/bin/podman stop -t 10 caddy
       ExecStopPost=/usr/bin/podman rm -f caddy
 

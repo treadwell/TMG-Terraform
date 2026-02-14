@@ -1,0 +1,22 @@
+[Unit]
+Description=Podman Tarot API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=app
+PermissionsStartOnly=true
+ExecStartPre=/bin/mkdir -p /run/user/%U
+ExecStartPre=/bin/chown app:app /run/user/%U
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+EnvironmentFile=-/home/app/apps/tarot/tarot.env
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+ExecStartPre=-/usr/bin/podman rm -f tarot-api
+ExecStart=/usr/bin/podman run --rm --name tarot-api -p 127.0.0.1:8091:8000 --env-file /home/app/apps/tarot/tarot.env localhost/tarot-api:deploy
+ExecStop=/usr/bin/podman stop -t 10 tarot-api
+ExecStopPost=-/usr/bin/podman rm -f tarot-api
+
+[Install]
+WantedBy=multi-user.target

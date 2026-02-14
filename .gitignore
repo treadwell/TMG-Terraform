@@ -6,6 +6,9 @@ id_rsa
 id_rsa.pub
 ssh_keys/
 .env
+.env.*
+*.env
+*.secret
 
 # Terraform
 **/.terraform/

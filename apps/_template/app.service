@@ -1,0 +1,21 @@
+[Unit]
+Description=Podman App (__APP_NAME__)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=app
+PermissionsStartOnly=true
+ExecStartPre=/bin/mkdir -p /run/user/%U
+ExecStartPre=/bin/chown app:app /run/user/%U
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+ExecStartPre=-/usr/bin/podman rm -f __APP_NAME__
+ExecStart=/usr/bin/podman run --rm --name __APP_NAME__ -p 127.0.0.1:__LOCAL_PORT__:__CONTAINER_PORT__ __IMAGE__
+ExecStop=/usr/bin/podman stop -t 10 __APP_NAME__
+ExecStopPost=-/usr/bin/podman rm -f __APP_NAME__
+
+[Install]
+WantedBy=multi-user.target

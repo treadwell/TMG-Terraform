@@ -1,0 +1,21 @@
+[Unit]
+Description=Podman Tarot Web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=app
+PermissionsStartOnly=true
+ExecStartPre=/bin/mkdir -p /run/user/%U
+ExecStartPre=/bin/chown app:app /run/user/%U
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+ExecStartPre=-/usr/bin/podman rm -f tarot-web
+ExecStart=/usr/bin/podman run --rm --name tarot-web -p 127.0.0.1:8090:80 localhost/tarot-web:deploy
+ExecStop=/usr/bin/podman stop -t 10 tarot-web
+ExecStopPost=-/usr/bin/podman rm -f tarot-web
+
+[Install]
+WantedBy=multi-user.target

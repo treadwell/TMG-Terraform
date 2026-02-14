@@ -12,4 +12,4 @@
 12. Validate site availability at domain + IP after fresh apply (pending).
 13. Future app rollout pattern (pending): deploy `tarot.treadwellmedia.io` by building an ARM64 image locally, transferring via `docker save` tarball, loading into Podman on EC2, creating `tarot.service` bound to localhost port, and adding a Caddy snippet in `/home/app/caddy/apps/` that reverse proxies the new subdomain.
 14. Add fallback subdomain behavior (pending): any subdomain not explicitly configured (for example, anything except `hello.treadwellmedia.io` and future named app routes) should redirect to `https://treadwellmedia.io`.
-15. Add zero-reboot app deployment workflow (pending): deploy/update Docker/Podman images and start/stop app services via systemd + Podman on the running host without rebuilding or restarting the EC2 instance.
+15. Add zero-reboot app deployment workflow (done): added reusable `apps/deploy_app.sh` for one-command app deployment from a source directory + hostname (build images, load on host, install service unit(s), install Caddy snippet, restart only app/Caddy). `apps/tarot/deploy.sh` now wraps this generic path for tarot defaults.
