@@ -12,10 +12,14 @@ Required:
 
 Optional:
   --name APP             App name slug (default: first host label)
-  --env-file PATH        Runtime env file (used for backend API container)
+  --env-file PATH        Runtime env file (used for app container(s))
   --web-host-port PORT   Host loopback port for web container
   --api-host-port PORT   Host loopback port for api container
   --api-path PATH        API prefix path (default: /api)
+  --persist-dir SPEC     Persistent directory mount (single-container mode only)
+                         SPEC format: relative_path:/container/path
+  --persist-file SPEC    Persistent file mount (single-container mode only)
+                         SPEC format: relative_path:/container/path
   --no-api               Deploy as single-container app (skip backend/Dockerfile)
   -h, --help             Show help
 
@@ -72,6 +76,9 @@ WEB_HOST_PORT=""
 API_HOST_PORT=""
 API_PATH="/api"
 NO_API="false"
+ENV_FILE_EXPLICIT="false"
+PERSIST_DIR_SPECS=()
+PERSIST_FILE_SPECS=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -89,6 +96,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --env-file)
       ENV_FILE="${2:-}"
+      ENV_FILE_EXPLICIT="true"
       shift 2
       ;;
     --web-host-port)
@@ -101,6 +109,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --api-path)
       API_PATH="${2:-}"
+      shift 2
+      ;;
+    --persist-dir)
+      PERSIST_DIR_SPECS+=("${2:-}")
+      shift 2
+      ;;
+    --persist-file)
+      PERSIST_FILE_SPECS+=("${2:-}")
       shift 2
       ;;
     --no-api)
@@ -206,6 +222,91 @@ if [ "$API_ENABLED" = "true" ]; then
   API_CONTAINER_PORT="$(detect_exposed_port "$API_DOCKERFILE" "8000")"
 fi
 
+if [ "$API_ENABLED" = "true" ] && { [ "${#PERSIST_DIR_SPECS[@]}" -gt 0 ] || [ "${#PERSIST_FILE_SPECS[@]}" -gt 0 ]; }; then
+  echo "--persist-dir and --persist-file are currently supported only with --no-api mode." >&2
+  exit 1
+fi
+
+PERSIST_ROOT="/home/app/apps/${APP_NAME}/persistent"
+PERSIST_PRESTART_LINES=()
+PERSIST_VOLUME_ARGS=()
+PERSIST_ENABLED="false"
+
+if [ "${#PERSIST_DIR_SPECS[@]}" -gt 0 ] || [ "${#PERSIST_FILE_SPECS[@]}" -gt 0 ]; then
+  PERSIST_ENABLED="true"
+  PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${PERSIST_ROOT}")
+fi
+
+for spec in "${PERSIST_DIR_SPECS[@]}"; do
+  relative_path="${spec%%:*}"
+  container_path="${spec#*:}"
+  if [ -z "$relative_path" ] || [ -z "$container_path" ] || [ "$relative_path" = "$spec" ]; then
+    echo "Invalid --persist-dir spec '${spec}'. Expected relative_path:/container/path" >&2
+    exit 1
+  fi
+  relative_path="${relative_path#./}"
+  case "$relative_path" in
+    ""|/*|*:*|../*|*/../*|*/..|..)
+      echo "Invalid persistent relative path '${relative_path}' in --persist-dir '${spec}'." >&2
+      exit 1
+      ;;
+  esac
+  if [[ "$relative_path" =~ [[:space:]] ]]; then
+    echo "Persistent relative path cannot contain spaces: '${relative_path}'" >&2
+    exit 1
+  fi
+  if [ "${container_path#/}" = "$container_path" ] || [[ "$container_path" =~ [[:space:]] ]]; then
+    echo "Container path must be absolute and contain no spaces in --persist-dir '${spec}'." >&2
+    exit 1
+  fi
+  host_path="${PERSIST_ROOT}/${relative_path}"
+  PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${host_path}")
+  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}")
+done
+
+for spec in "${PERSIST_FILE_SPECS[@]}"; do
+  relative_path="${spec%%:*}"
+  container_path="${spec#*:}"
+  if [ -z "$relative_path" ] || [ -z "$container_path" ] || [ "$relative_path" = "$spec" ]; then
+    echo "Invalid --persist-file spec '${spec}'. Expected relative_path:/container/path" >&2
+    exit 1
+  fi
+  relative_path="${relative_path#./}"
+  case "$relative_path" in
+    ""|/*|*:*|../*|*/../*|*/..|..)
+      echo "Invalid persistent relative path '${relative_path}' in --persist-file '${spec}'." >&2
+      exit 1
+      ;;
+  esac
+  if [[ "$relative_path" =~ [[:space:]] ]]; then
+    echo "Persistent relative path cannot contain spaces: '${relative_path}'" >&2
+    exit 1
+  fi
+  if [ "${container_path#/}" = "$container_path" ] || [[ "$container_path" =~ [[:space:]] ]]; then
+    echo "Container path must be absolute and contain no spaces in --persist-file '${spec}'." >&2
+    exit 1
+  fi
+  host_path="${PERSIST_ROOT}/${relative_path}"
+  host_dir="$(dirname "$host_path")"
+  PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${host_dir}")
+  PERSIST_PRESTART_LINES+=("ExecStartPre=/usr/bin/touch ${host_path}")
+  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}")
+done
+
+if [ "$PERSIST_ENABLED" = "true" ]; then
+  PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/chown -R app:app ${PERSIST_ROOT}")
+fi
+
+PERSIST_PRESTART_BLOCK=""
+for line in "${PERSIST_PRESTART_LINES[@]}"; do
+  PERSIST_PRESTART_BLOCK+="${line}"$'\n'
+done
+
+PERSIST_VOLUME_FLAGS=""
+for token in "${PERSIST_VOLUME_ARGS[@]}"; do
+  PERSIST_VOLUME_FLAGS+=" ${token}"
+done
+
 WEB_IMAGE="localhost/${APP_NAME}-web:deploy"
 API_IMAGE="localhost/${APP_NAME}-api:deploy"
 SINGLE_IMAGE="localhost/${APP_NAME}:deploy"
@@ -216,6 +317,15 @@ cleanup() {
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
+
+ENV_FILE_PRESENT="false"
+if [ -f "$ENV_FILE" ]; then
+  cp "$ENV_FILE" "$TMP_DIR/${APP_NAME}.env"
+  chmod 600 "$TMP_DIR/${APP_NAME}.env"
+  ENV_FILE_PRESENT="true"
+elif [ "$ENV_FILE_EXPLICIT" = "true" ]; then
+  echo "Warning: explicit env file not found at $ENV_FILE. Continuing without --env-file." >&2
+fi
 
 if [ "$API_ENABLED" = "true" ]; then
   WEB_SERVICE_NAME="${APP_NAME}-web"
@@ -282,19 +392,23 @@ https://${HOSTNAME} {
 }
 EOF2
 
-  if [ -f "$ENV_FILE" ]; then
-    cp "$ENV_FILE" "$TMP_DIR/${APP_NAME}.env"
-    chmod 600 "$TMP_DIR/${APP_NAME}.env"
-  else
+  if [ "$ENV_FILE_PRESENT" = "false" ]; then
     cat >"$TMP_DIR/${APP_NAME}.env" <<'EOF2'
 # Runtime variables for backend API service
 # OPENAI_API_KEY=...
 # OPENAI_MODEL=gpt-4o-mini
 EOF2
+    ENV_FILE_PRESENT="true"
     echo "Warning: no env file found at $ENV_FILE. API may fail until /home/app/apps/${APP_NAME}/${APP_NAME}.env is populated." >&2
   fi
 else
   SERVICE_NAME="$APP_NAME"
+  SINGLE_ENV_SYSTEMD=""
+  SINGLE_ENV_PODMAN=""
+  if [ "$ENV_FILE_PRESENT" = "true" ]; then
+    SINGLE_ENV_SYSTEMD="EnvironmentFile=-/home/app/apps/${APP_NAME}/${APP_NAME}.env"
+    SINGLE_ENV_PODMAN="--env-file /home/app/apps/${APP_NAME}/${APP_NAME}.env"
+  fi
 
   cat >"$TMP_DIR/${SERVICE_NAME}.service" <<EOF2
 [Unit]
@@ -308,11 +422,12 @@ PermissionsStartOnly=true
 ExecStartPre=/bin/mkdir -p /run/user/APP_UID_PLACEHOLDER
 ExecStartPre=/bin/chown app:app /run/user/APP_UID_PLACEHOLDER
 Environment=XDG_RUNTIME_DIR=/run/user/APP_UID_PLACEHOLDER
+${SINGLE_ENV_SYSTEMD}
 Restart=always
 RestartSec=2
 TimeoutStopSec=10
-ExecStartPre=-/usr/bin/podman rm -f ${SERVICE_NAME}
-ExecStart=/usr/bin/podman run --rm --name ${SERVICE_NAME} -p 127.0.0.1:${WEB_HOST_PORT}:${WEB_CONTAINER_PORT} ${SINGLE_IMAGE}
+${PERSIST_PRESTART_BLOCK}ExecStartPre=-/usr/bin/podman rm -f ${SERVICE_NAME}
+ExecStart=/usr/bin/podman run --rm --name ${SERVICE_NAME} -p 127.0.0.1:${WEB_HOST_PORT}:${WEB_CONTAINER_PORT} ${SINGLE_ENV_PODMAN}${PERSIST_VOLUME_FLAGS} ${SINGLE_IMAGE}
 ExecStop=/usr/bin/podman stop -t 10 ${SERVICE_NAME}
 ExecStopPost=-/usr/bin/podman rm -f ${SERVICE_NAME}
 
@@ -335,10 +450,12 @@ set -euo pipefail
 REMOTE_STAGE="${REMOTE_STAGE}"
 APP_NAME="${APP_NAME}"
 API_ENABLED="${API_ENABLED}"
+ENV_FILE_PRESENT="${ENV_FILE_PRESENT}"
 
 APP_UID="\$(id -u app)"
 sudo mkdir -p "/run/user/\${APP_UID}"
 sudo chown app:app "/run/user/\${APP_UID}"
+sudo mkdir -p "/home/app/apps/\${APP_NAME}"
 
 if ! sudo grep -q '/home/app/caddy/apps:/home/app/caddy/apps:ro' /etc/systemd/system/caddy.service; then
   sudo sed -i 's|-v /home/app/caddy/data:/data |-v /home/app/caddy/apps:/home/app/caddy/apps:ro -v /home/app/caddy/data:/data |' /etc/systemd/system/caddy.service
@@ -352,13 +469,15 @@ if [ "\${API_ENABLED}" = "true" ]; then
   sudo install -m 644 "\${REMOTE_STAGE}/\${APP_NAME}-api.service" "/etc/systemd/system/\${APP_NAME}-api.service"
   sudo chmod 644 "\${REMOTE_STAGE}/\${APP_NAME}-web.tar" "\${REMOTE_STAGE}/\${APP_NAME}-api.tar"
   sudo chown app:app "\${REMOTE_STAGE}/\${APP_NAME}-web.tar" "\${REMOTE_STAGE}/\${APP_NAME}-api.tar"
-  sudo mkdir -p "/home/app/apps/\${APP_NAME}"
-  sudo install -m 600 "\${REMOTE_STAGE}/\${APP_NAME}.env" "/home/app/apps/\${APP_NAME}/\${APP_NAME}.env"
-  sudo chown app:app "/home/app/apps/\${APP_NAME}/\${APP_NAME}.env"
 else
   sudo install -m 644 "\${REMOTE_STAGE}/\${APP_NAME}.service" "/etc/systemd/system/\${APP_NAME}.service"
   sudo chmod 644 "\${REMOTE_STAGE}/\${APP_NAME}.tar"
   sudo chown app:app "\${REMOTE_STAGE}/\${APP_NAME}.tar"
+fi
+
+if [ "\${ENV_FILE_PRESENT}" = "true" ]; then
+  sudo install -m 600 "\${REMOTE_STAGE}/\${APP_NAME}.env" "/home/app/apps/\${APP_NAME}/\${APP_NAME}.env"
+  sudo chown app:app "/home/app/apps/\${APP_NAME}/\${APP_NAME}.env"
 fi
 
 sudo mkdir -p /home/app/caddy/apps
@@ -396,6 +515,19 @@ if [ "$API_ENABLED" = "true" ]; then
   echo "Mode: web+api (web host port ${WEB_HOST_PORT}, api host port ${API_HOST_PORT})"
 else
   echo "Mode: single container (host port ${WEB_HOST_PORT})"
+fi
+if [ "$PERSIST_ENABLED" = "true" ]; then
+  echo "Persistent root on host: ${PERSIST_ROOT}"
+  for spec in "${PERSIST_FILE_SPECS[@]}"; do
+    relative_path="${spec%%:*}"
+    container_path="${spec#*:}"
+    echo "  file: ${PERSIST_ROOT}/${relative_path#./} -> ${container_path}"
+  done
+  for spec in "${PERSIST_DIR_SPECS[@]}"; do
+    relative_path="${spec%%:*}"
+    container_path="${spec#*:}"
+    echo "  dir:  ${PERSIST_ROOT}/${relative_path#./} -> ${container_path}"
+  done
 fi
 
 echo "Building ARM64 image(s) from Dockerfile(s)..."
@@ -441,12 +573,22 @@ if [ "$API_ENABLED" = "true" ]; then
     "$TMP_DIR/remote-apply.sh" \
     "${TMG_SSH_USER}@${TMG_HOST}:${REMOTE_STAGE}/"
 else
-  scp "${SSH_OPTS[@]}" \
-    "$TMP_DIR/${APP_NAME}.tar" \
-    "$TMP_DIR/${APP_NAME}.service" \
-    "$TMP_DIR/${APP_NAME}.caddy" \
-    "$TMP_DIR/remote-apply.sh" \
-    "${TMG_SSH_USER}@${TMG_HOST}:${REMOTE_STAGE}/"
+  if [ "$ENV_FILE_PRESENT" = "true" ]; then
+    scp "${SSH_OPTS[@]}" \
+      "$TMP_DIR/${APP_NAME}.tar" \
+      "$TMP_DIR/${APP_NAME}.service" \
+      "$TMP_DIR/${APP_NAME}.caddy" \
+      "$TMP_DIR/${APP_NAME}.env" \
+      "$TMP_DIR/remote-apply.sh" \
+      "${TMG_SSH_USER}@${TMG_HOST}:${REMOTE_STAGE}/"
+  else
+    scp "${SSH_OPTS[@]}" \
+      "$TMP_DIR/${APP_NAME}.tar" \
+      "$TMP_DIR/${APP_NAME}.service" \
+      "$TMP_DIR/${APP_NAME}.caddy" \
+      "$TMP_DIR/remote-apply.sh" \
+      "${TMG_SSH_USER}@${TMG_HOST}:${REMOTE_STAGE}/"
+  fi
 fi
 
 echo "Applying on remote host..."

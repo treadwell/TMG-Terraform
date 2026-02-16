@@ -69,6 +69,16 @@ Generic deploy examples:
   --no-api
 ```
 
+## Loopback port allocations
+Avoid host-port collisions when deploying single-container apps behind Caddy.
+
+- `breathing.treadwellmedia.io` -> `127.0.0.1:8092`
+- `writer.treadwellmedia.io` -> `127.0.0.1:8093`
+- `tarot.treadwellmedia.io` web -> `127.0.0.1:8090`
+- `tarot.treadwellmedia.io` api -> `127.0.0.1:8091`
+
+If `writer` is accidentally deployed on `8092`, Caddy will route `writer.treadwellmedia.io` to the breathing app.
+
 ## Tarot app deployment (from Dockerfiles)
 The tarot source app is at `/Users/kbrooks/Dropbox/Projects/tarot-app`.
 
