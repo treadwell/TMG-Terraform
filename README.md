@@ -131,7 +131,24 @@ Expected baseline behavior:
 - `https://hello.treadwellmedia.io` responds from nginx hello (`hello`).
 
 ## SSH and host key churn
-After rebuild/replacement:
+After rebuild/replacement, easiest path:
+```bash
+./infra/ssh_reconnect.sh
+```
+
+Useful options:
+```bash
+# Skip SSO login if already authenticated
+./infra/ssh_reconnect.sh --no-sso
+
+# Prep/check only (do not open SSH shell)
+./infra/ssh_reconnect.sh --no-ssh
+
+# Verbose SSH handshake diagnostics
+./infra/ssh_reconnect.sh --verbose
+```
+
+Manual fallback:
 ```bash
 ssh-keygen -R 54.174.206.49
 ssh -i connect.key admin@54.174.206.49
