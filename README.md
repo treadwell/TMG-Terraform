@@ -69,6 +69,10 @@ Generic deploy examples:
   --no-api
 ```
 
+Env file behavior:
+- `--env-file` now expands `$VAR` / `${VAR}` from local shell env by default before upload.
+- Use `--no-expand-env-file` to disable expansion and upload values literally.
+
 ## Loopback port allocations
 Avoid host-port collisions when deploying single-container apps behind Caddy.
 
@@ -86,28 +90,26 @@ Detected internal ports from source Dockerfiles:
 - web container: `80` (`/Users/kbrooks/Dropbox/Projects/tarot-app/Dockerfile`)
 - api container: `8000` (`/Users/kbrooks/Dropbox/Projects/tarot-app/backend/Dockerfile`)
 
-This repo now includes:
-- `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/tarot-web.service`
-- `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/tarot-api.service`
-- `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/tarot.caddy`
+Tarot deploy wrapper files:
 - `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/deploy.sh`
-- `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/tarot.env.example`
+- `/Users/kbrooks/Dropbox/Projects/TMG Terraform/apps/tarot/env`
 
 Recommended secret handling (no local commit risk):
-1. Keep the real key file outside any git repo, for example: `/Users/kbrooks/.config/tmg/tarot.env`.
-2. Use `apps/tarot/tarot.env.example` as the tracked template only.
-3. Deploy with `TMG_ENV_FILE` pointing to the external file.
+1. Keep real secrets in local shell env (for example: `export OPENAI_API_KEY_TAROT=...`).
+2. Keep `apps/tarot/env` as variable references only (example: `OPENAI_API_KEY=$OPENAI_API_KEY_TAROT`).
+3. Use `--env-file` only when you want to override the wrapper's default env file.
 
 Run deploy:
 ```bash
 cd /Users/kbrooks/Dropbox/Projects/TMG\ Terraform
-./apps/tarot/deploy.sh /Users/kbrooks/Dropbox/Projects/tarot-app --env-file /Users/kbrooks/.config/tmg/tarot.env
+export OPENAI_API_KEY_TAROT='...'
+TMG_HOST=<instance-eip> ./apps/tarot/deploy.sh /Users/kbrooks/Dropbox/Projects/tarot-app
 ```
 
 What it does:
 - Builds ARM64 images from both Dockerfiles.
 - Copies image tarballs + service + caddy files to EC2.
-- Copies your env file to `/home/app/apps/tarot/tarot.env` with `0600` permissions.
+- Renders env variables from your local shell env and writes `/home/app/apps/tarot/tarot.env` with `0600` permissions.
 - Loads images into Podman as user `app`.
 - Enables/restarts `tarot-api.service`, `tarot-web.service`, and restarts `caddy.service`.
 

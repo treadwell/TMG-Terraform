@@ -13,6 +13,8 @@ Required:
 Optional:
   --name APP             App name slug (default: first host label)
   --env-file PATH        Runtime env file (used for app container(s))
+  --expand-env-file      Expand $VAR/${VAR} in env file from local shell env (default)
+  --no-expand-env-file   Disable env-file variable expansion
   --web-host-port PORT   Host loopback port for web container
   --api-host-port PORT   Host loopback port for api container
   --api-path PATH        API prefix path (default: /api)
@@ -68,6 +70,46 @@ validate_port() {
   esac
 }
 
+expand_env_file() {
+  local source_file="$1"
+  local target_file="$2"
+
+  if [ "$EXPAND_ENV_FILE" != "true" ]; then
+    cp "$source_file" "$target_file"
+    return
+  fi
+
+  perl - "$source_file" "$target_file" <<'PERL'
+use strict;
+use warnings;
+
+my ($src, $dst) = @ARGV;
+open my $in,  '<', $src or die "Failed to read env file '$src': $!\n";
+open my $out, '>', $dst or die "Failed to write env file '$dst': $!\n";
+
+sub expand_var {
+  my ($name) = @_;
+  die "Missing local env var '$name' referenced in env file\n" unless exists $ENV{$name};
+  return $ENV{$name};
+}
+
+while (my $line = <$in>) {
+  if ($line =~ /^\s*#/ || $line !~ /=/) {
+    print {$out} $line;
+    next;
+  }
+
+  chomp $line;
+  my ($key, $value) = split(/=/, $line, 2);
+  $value =~ s/\\\$/__ESCAPED_DOLLAR__/g;
+  $value =~ s/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/expand_var($1)/ge;
+  $value =~ s/\$([A-Za-z_][A-Za-z0-9_]*)/expand_var($1)/ge;
+  $value =~ s/__ESCAPED_DOLLAR__/\$/g;
+  print {$out} "$key=$value\n";
+}
+PERL
+}
+
 SOURCE_DIR=""
 HOSTNAME=""
 APP_NAME=""
@@ -77,6 +119,7 @@ API_HOST_PORT=""
 API_PATH="/api"
 NO_API="false"
 ENV_FILE_EXPLICIT="false"
+EXPAND_ENV_FILE="true"
 PERSIST_DIR_SPECS=()
 PERSIST_FILE_SPECS=()
 
@@ -98,6 +141,14 @@ while [ "$#" -gt 0 ]; do
       ENV_FILE="${2:-}"
       ENV_FILE_EXPLICIT="true"
       shift 2
+      ;;
+    --expand-env-file)
+      EXPAND_ENV_FILE="true"
+      shift
+      ;;
+    --no-expand-env-file)
+      EXPAND_ENV_FILE="false"
+      shift
       ;;
     --web-host-port)
       WEB_HOST_PORT="${2:-}"
@@ -186,6 +237,9 @@ require_cmd docker
 require_cmd ssh
 require_cmd scp
 require_cmd terraform
+if [ "$EXPAND_ENV_FILE" = "true" ]; then
+  require_cmd perl
+fi
 
 TMG_HOST="${TMG_HOST:-$(terraform -chdir="$REPO_ROOT/infra" output -raw eip 2>/dev/null || true)}"
 TMG_SSH_USER="${TMG_SSH_USER:-admin}"
@@ -237,7 +291,7 @@ if [ "${#PERSIST_DIR_SPECS[@]}" -gt 0 ] || [ "${#PERSIST_FILE_SPECS[@]}" -gt 0 ]
   PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${PERSIST_ROOT}")
 fi
 
-for spec in "${PERSIST_DIR_SPECS[@]}"; do
+for spec in "${PERSIST_DIR_SPECS[@]+${PERSIST_DIR_SPECS[@]}}"; do
   relative_path="${spec%%:*}"
   container_path="${spec#*:}"
   if [ -z "$relative_path" ] || [ -z "$container_path" ] || [ "$relative_path" = "$spec" ]; then
@@ -264,7 +318,7 @@ for spec in "${PERSIST_DIR_SPECS[@]}"; do
   PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}")
 done
 
-for spec in "${PERSIST_FILE_SPECS[@]}"; do
+for spec in "${PERSIST_FILE_SPECS[@]+${PERSIST_FILE_SPECS[@]}}"; do
   relative_path="${spec%%:*}"
   container_path="${spec#*:}"
   if [ -z "$relative_path" ] || [ -z "$container_path" ] || [ "$relative_path" = "$spec" ]; then
@@ -298,12 +352,12 @@ if [ "$PERSIST_ENABLED" = "true" ]; then
 fi
 
 PERSIST_PRESTART_BLOCK=""
-for line in "${PERSIST_PRESTART_LINES[@]}"; do
+for line in "${PERSIST_PRESTART_LINES[@]+${PERSIST_PRESTART_LINES[@]}}"; do
   PERSIST_PRESTART_BLOCK+="${line}"$'\n'
 done
 
 PERSIST_VOLUME_FLAGS=""
-for token in "${PERSIST_VOLUME_ARGS[@]}"; do
+for token in "${PERSIST_VOLUME_ARGS[@]+${PERSIST_VOLUME_ARGS[@]}}"; do
   PERSIST_VOLUME_FLAGS+=" ${token}"
 done
 
@@ -320,7 +374,7 @@ trap cleanup EXIT
 
 ENV_FILE_PRESENT="false"
 if [ -f "$ENV_FILE" ]; then
-  cp "$ENV_FILE" "$TMP_DIR/${APP_NAME}.env"
+  expand_env_file "$ENV_FILE" "$TMP_DIR/${APP_NAME}.env"
   chmod 600 "$TMP_DIR/${APP_NAME}.env"
   ENV_FILE_PRESENT="true"
 elif [ "$ENV_FILE_EXPLICIT" = "true" ]; then
@@ -511,6 +565,11 @@ chmod +x "$TMP_DIR/remote-apply.sh"
 
 echo "Deploying app '${APP_NAME}' from ${SOURCE_DIR} to ${HOSTNAME}"
 echo "Target host: ${TMG_HOST}"
+if [ "$EXPAND_ENV_FILE" = "true" ]; then
+  echo "Env file mode: variable expansion enabled (default)"
+else
+  echo "Env file mode: variable expansion disabled (--no-expand-env-file)"
+fi
 if [ "$API_ENABLED" = "true" ]; then
   echo "Mode: web+api (web host port ${WEB_HOST_PORT}, api host port ${API_HOST_PORT})"
 else
@@ -518,12 +577,12 @@ else
 fi
 if [ "$PERSIST_ENABLED" = "true" ]; then
   echo "Persistent root on host: ${PERSIST_ROOT}"
-  for spec in "${PERSIST_FILE_SPECS[@]}"; do
+  for spec in "${PERSIST_FILE_SPECS[@]+${PERSIST_FILE_SPECS[@]}}"; do
     relative_path="${spec%%:*}"
     container_path="${spec#*:}"
     echo "  file: ${PERSIST_ROOT}/${relative_path#./} -> ${container_path}"
   done
-  for spec in "${PERSIST_DIR_SPECS[@]}"; do
+  for spec in "${PERSIST_DIR_SPECS[@]+${PERSIST_DIR_SPECS[@]}}"; do
     relative_path="${spec%%:*}"
     container_path="${spec#*:}"
     echo "  dir:  ${PERSIST_ROOT}/${relative_path#./} -> ${container_path}"
