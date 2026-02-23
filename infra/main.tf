@@ -122,30 +122,8 @@ runcmd:
       WantedBy=multi-user.target
       UNIT
   - |
-      cat >/etc/systemd/system/hello.service <<'UNIT'
-      [Unit]
-      Description=Podman NGINX Hello (hello.treadwellmedia.io)
-      After=network-online.target
-      Wants=network-online.target
-
-      [Service]
-      User=app
-      PermissionsStartOnly=true
-      ExecStartPre=/bin/mkdir -p /run/user/APP_UID_PLACEHOLDER
-      ExecStartPre=/bin/chown app:app /run/user/APP_UID_PLACEHOLDER
-      Environment=XDG_RUNTIME_DIR=/run/user/APP_UID_PLACEHOLDER
-      Restart=always
-      TimeoutStopSec=10
-      ExecStart=/usr/bin/podman run --rm --name hello -p 127.0.0.1:8082:80 docker.io/library/nginx:alpine
-      ExecStop=/usr/bin/podman stop -t 10 hello
-      ExecStopPost=/usr/bin/podman rm -f hello
-
-      [Install]
-      WantedBy=multi-user.target
-      UNIT
-  - |
       APP_UID="$(id -u app)"
-      sed -i "s|APP_UID_PLACEHOLDER|$${APP_UID}|g" /etc/systemd/system/landing.service /etc/systemd/system/hello.service
+      sed -i "s|APP_UID_PLACEHOLDER|$${APP_UID}|g" /etc/systemd/system/landing.service
   - mkdir -p /home/app/caddy/apps /home/app/caddy/data /home/app/caddy/config
   - |
       cat >/home/app/caddy/Caddyfile <<'CADDYFILE'
@@ -171,26 +149,11 @@ runcmd:
         reverse_proxy 127.0.0.1:8081
       }
 
-      https://hello.treadwellmedia.io {
-        tls {
-          issuer acme {
-            disable_http_challenge
-          }
-        }
-        reverse_proxy 127.0.0.1:8082
-      }
-
-      # Add future app routes as standalone site blocks in /home/app/caddy/apps/*.caddy
-      # Example:
-      # https://app.treadwellmedia.io {
-      #   reverse_proxy 127.0.0.1:9000
-      # }
       import /home/app/caddy/apps/*.caddy
       CADDYFILE
-  - rm -f /home/app/caddy/apps/maintenance.caddy
   - chown -R app:app /home/app
   - systemctl daemon-reload
-  - systemctl enable --now landing.service hello.service caddy.service
+  - systemctl enable --now landing.service caddy.service
 EOF
 }
 
