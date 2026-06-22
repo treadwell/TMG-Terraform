@@ -65,6 +65,14 @@ runcmd:
         journalctl -u ssh --no-pager -n 80 || true
         exit 1
       fi
+  - |
+      if [ ! -f /swapfile ]; then
+        fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024
+        chmod 600 /swapfile
+        mkswap /swapfile
+      fi
+      swapon /swapfile 2>/dev/null || true
+      grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
   - usermod --add-subuids 100000-165535 --add-subgids 100000-165535 app
   - loginctl enable-linger app
   - |
