@@ -315,7 +315,7 @@ for spec in "${PERSIST_DIR_SPECS[@]+${PERSIST_DIR_SPECS[@]}}"; do
   fi
   host_path="${PERSIST_ROOT}/${relative_path}"
   PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${host_path}")
-  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}")
+  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}:U")
 done
 
 for spec in "${PERSIST_FILE_SPECS[@]+${PERSIST_FILE_SPECS[@]}}"; do
@@ -344,7 +344,7 @@ for spec in "${PERSIST_FILE_SPECS[@]+${PERSIST_FILE_SPECS[@]}}"; do
   host_dir="$(dirname "$host_path")"
   PERSIST_PRESTART_LINES+=("ExecStartPre=/bin/mkdir -p ${host_dir}")
   PERSIST_PRESTART_LINES+=("ExecStartPre=/usr/bin/touch ${host_path}")
-  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}")
+  PERSIST_VOLUME_ARGS+=("-v" "${host_path}:${container_path}:U")
 done
 
 if [ "$PERSIST_ENABLED" = "true" ]; then

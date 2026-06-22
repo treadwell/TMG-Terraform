@@ -72,10 +72,22 @@ Avoid host-port collisions when deploying single-container apps behind Caddy.
 
 - `breathing.treadwellmedia.io` -> `127.0.0.1:8092`
 - `writer.treadwellmedia.io` -> `127.0.0.1:8093`
+- `calibre.treadwellmedia.io` -> `127.0.0.1:8094`
 - `tarot.treadwellmedia.io` web -> `127.0.0.1:8090`
 - `tarot.treadwellmedia.io` api -> `127.0.0.1:8091`
 
 If `writer` is accidentally deployed on `8092`, Caddy will route `writer.treadwellmedia.io` to the breathing app.
+
+## CalibreRemote app deployment
+The CalibreRemote source app is at `/Users/kbrooks/Dropbox/Projects/CalibreRemote`.
+
+Run deploy:
+```bash
+cd /Users/kbrooks/Dropbox/Projects/TMG\ Terraform
+TMG_HOST=<instance-eip> ./apps/calibre-remote/deploy.sh /Users/kbrooks/Dropbox/Projects/CalibreRemote
+```
+
+The wrapper deploys a single container to `https://calibre.treadwellmedia.io`, rewrites `BASE_URL` to that hostname, sets `TRUST_PROXY=1`, and persists `/app/data` on the EC2 app volume.
 
 ## Tarot app deployment (from Dockerfiles)
 The tarot source app is at `/Users/kbrooks/Dropbox/Projects/tarot-app`.
